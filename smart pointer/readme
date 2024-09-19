@@ -1,0 +1,23 @@
+std::unique_ptr
+
+    unique_ptr表示对对象的独占所有权。
+    在同一时间内，只能有一个unique_ptr指向一个给定的对象。
+    当unique_ptr被销毁时（例如，离开作用域），它所指向的对象也会被自动删除。
+    unique_ptr不能复制，但可以移动。
+    适用于单个对象的动态内存管理，确保资源不被意外共享或泄露。
+
+std::shared_ptr
+
+    shared_ptr表示对对象的共享所有权。
+    多个shared_ptr实例可以指向同一个对象，并且当最后一个指向该对象的shared_ptr被销毁或重置时，对象才会被删除。
+    shared_ptr通过控制块（control block）来跟踪有多少shared_ptr实例指向了同一个对象。
+    适用于需要多个所有者共享同一个对象的场景。
+
+std::weak_ptr
+
+    weak_ptr是一种不拥有其所指向对象的智能指针。
+    它主要是为了解决shared_ptr之间的循环引用问题。
+    weak_ptr可以指向一个由shared_ptr管理的对象，但它不会增加对象的引用计数。
+    因此，它不会阻止对象的销毁。
+    适用于解决shared_ptr的循环引用问题，以及在不拥有对象所有权但需要访问对象时的情况。
+
