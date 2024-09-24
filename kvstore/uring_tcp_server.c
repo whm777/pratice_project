@@ -17,6 +17,7 @@
 #define EVENT_READ 1
 #define EVENT_WRITE 2
 
+extern int kvs_protocol(char *request, int request_length, char *response);
 
 struct conn_info{
     int fd;
@@ -109,13 +110,14 @@ int main(int argc, char **argv)
     io_uring_queue_init_params(ENTRIES_LENGTH, &ring, &params);
     printf("after io_uring_queue_init_params\n");
 
-    //提交队列（SQ）
-    struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
+    //获取SQE，代表提交队列，SQE的不同决定了执行不同的操作，比如：文件读写，网络套接字操作.
+    struct io_uring_sqe *sqe = NULL;
 
     struct sockaddr *cliaddr;
     socklen_t len = sizeof(cliaddr);
 
-    set_event_acceptv(sqe, sockfd, cliaddr, &len, 0);
+    set_event_accept(&ring, sockfd, cliaddr, &len, 0);
+    printf("after set_event_accept\n");
     char buffer[BUFFER_LENGTH] = {0};
     while(1){
         //将ring 提交到内核
@@ -140,15 +142,17 @@ int main(int argc, char **argv)
             }
             else if (result.event == EVENT_READ){
                 int ret = entries->res;
-                char *recv_buffer = io_using_cqe_get_data(entries);
+                char *recv_buffer = io_uring_cqe_get_data(entries);
                 printf("read %d\n", ret);
                 if(ret ==0){
                     close(result.fd);
                 }
                 else if (ret > 0){
-                    set_event_send(&ring, result.fd, buffer, BUFFER_LENGTH, 0);
-                }else{
-                    printf("buffer size:%d ; is %s\n",ret, recv_buffer);
+                    char response[1024] = {0};
+                    int res_length =  kvs_protocol(recv_buffer, ret, response);
+                    set_event_send(&ring, result.fd, response, res_length, 0);
+                
+                    //printf("buffer size:%d ; is %s\n",ret, recv_buffer);
                 }
             }else if(result.event == EVENT_WRITE){
                 int ret = entries->res;

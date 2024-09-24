@@ -33,10 +33,12 @@ int recv_cb(int fd){
     }
     //printf("fd[%d] recv:%s\n",fd, conn_fd[fd].rbuffer);
     conn_fd[fd].rlength = count;
-    #if 0
+    #if HTTP_ENABLE
         http_request(&conn_fd[fd]);
-    #else
+    #elif WS_ENABLE
         ws_request(&conn_fd[fd]);
+    #elif KVS_ENABLE
+        kvs_request(&conn_fd[fd]);
     #endif
     set_event(fd, EPOLLOUT, 0);
 
@@ -45,10 +47,12 @@ int recv_cb(int fd){
 
 int send_cb(int fd){
     if (fd < 0) return -1;
-    #if 0
+    #if HTTP_ENABLE
         http_response(&conn_fd[fd]);
-    #else
+    #elif WS_ENABLE
         ws_response(&conn_fd[fd]);
+    #elif KVS_ENABLE
+        kvs_response(&conn_fd[fd]);
     #endif
     int count = 0;
     if (conn_fd[fd].wlength != 0) {

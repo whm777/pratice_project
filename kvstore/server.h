@@ -2,7 +2,6 @@
 #define SERVER_H
 
 
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -15,7 +14,9 @@
 #include <time.h>
 #include <sys/time.h>
 
-
+#define HTTP_ENABLE 0
+#define KVS_ENABLE 1
+#define WS_ENABLE 0
 
 #define BUFFER_LENGTH 1024
 #define MAX_PORTS 20
@@ -45,10 +46,15 @@ struct conn {
     char mask[4];//?
 };
 
+#if HTTP_ENABLE
 int http_request(struct conn* c);
 int http_response(struct conn* c);
-
+#elif KVS_ENABLE
+int kvs_request(struct conn* c);
+int kvs_response(struct conn* c);
+#elif WS_ENABLE
 int ws_request(struct conn* c); //?
 int ws_response(struct conn* c);
+#endif
 
 #endif
