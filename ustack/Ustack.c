@@ -7,6 +7,7 @@
 
 #define DEBUG 0
 #define enablesend 
+#define ENABLETCP 1
 
 //dpdk绑定的网口按照顺序来，从0开始
 int global_portid = 0;
@@ -24,8 +25,33 @@ uint16_t global_dport;
 
 uint32_t global_dip;
 uint32_t global_sip;
+#endif
+
+#if ENABLETCP
+
+#define TCP_INIT_WINDOWS		14600   //虽然写的是15，实际是146
+uint8_t global_flags;
+uint32_t global_seqnum;
+uint32_t global_acknum;
+
+typedef enum __USTACK_TCP_STATUS {
+    USTACK_TCP_STATUS_CLOSED = 0, // 连接关闭状态
+	USTACK_TCP_STATUS_LISTEN,       // 监听状态，等待连接请求
+	USTACK_TCP_STATUS_SYN_RCVD,     // 接收到同步报文段（SYN）状态，等待确认报文段（ACK）
+	USTACK_TCP_STATUS_SYN_SENT,     // 发送同步报文段（SYN）状态，等待接收确认报文段（ACK）
+	USTACK_TCP_STATUS_ESTABLISHED,  // 连接已建立状态，可以进行数据传输
+	USTACK_TCP_STATUS_FIN_WAIT_1,   // 关闭连接，等待发送确认报文段（ACK）
+	USTACK_TCP_STATUS_FIN_WAIT_2,   // 关闭连接，等待接收对方的连接终止请求
+	USTACK_TCP_STATUS_CLOSING,      // 双方同时关闭连接，等待最后一个确认报文段（ACK）
+	USTACK_TCP_STATUS_TIMEWAIT,     // 等待足够时间，确保连接释放
+	USTACK_TCP_STATUS_CLOSE_WAIT,   // 接收到对方的连接终止请求，等待本地关闭响应
+	USTACK_TCP_STATUS_LAST_ACK      // 本地关闭后，等待最后一个确认报文段（ACK）
+}USTACK_TCP_STATUS;
+
+uint8_t tcp_status = USTACK_TCP_STATUS_LISTEN;
  
 #endif
+
 
 static const struct rte_eth_conf port_conf_default = {
     .rxmode = { .max_rx_pkt_len = RTE_ETHER_MAX_LEN }
@@ -86,7 +112,7 @@ static void print_global_info(struct rte_ipv4_hdr *iphdr, struct rte_udp_hdr *ud
 
 /*
 参数：
-    msg:组织完成后的数据包地址
+    msg:组织完成后的数据包地址 
     data:需要修改的数据包的内容
     len：需要修改的数据包长度
 返回值：
@@ -169,7 +195,54 @@ static void handle_udp_packet(struct rte_udp_hdr *udphdr, struct rte_ether_hdr *
 }
 #endif
 
-#if 0
+#if 1
+
+static int ustack_encode_tcp_pkt(uint8_t *msg,  uint16_t total_len)
+{
+    if (!msg || !data || total_len == 0) { // 增加len的有效性检查
+        return -1; // 参数校验失败
+    }
+
+    // 第一步：以太网头
+    struct rte_ether_hdr *ethhdr = (struct rte_ether_hdr *)msg;
+    rte_memcpy(ethhdr->d_addr.addr_bytes, global_dmac, RTE_ETHER_ADDR_LEN);
+    rte_memcpy(ethhdr->s_addr.addr_bytes, global_smac, RTE_ETHER_ADDR_LEN);
+    ethhdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4); // 使用DPDK提供的转换函数
+
+    // IP头
+    struct rte_ipv4_hdr *iphdr = (struct rte_ipv4_hdr *)(ethhdr + 1);
+    iphdr->version_ihl = 0x45;
+    iphdr->type_of_service = 0;
+    iphdr->total_length = rte_cpu_to_be_16(total_len - sizeof(struct rte_ether_hdr)); // 明确写出IP头部大小
+    iphdr->packet_id = 0;
+    iphdr->fragment_offset = 0;
+    iphdr->time_to_live = 64;
+    iphdr->next_proto_id = IPPORT_TCP;
+    iphdr->src_addr = global_sip;
+    iphdr->dst_addr = global_dip;
+    iphdr->hdr_checksum = 0; // 在计算校验和前将其设为0
+    iphdr->hdr_checksum = rte_ipv4_cksum(iphdr);
+
+    // TCP头
+    struct rte_tcp_hdr *tcp = (struct rte_tcp_hdr *)(iphdr + 1);
+    tcp->src_port = global_sport;
+    tcp->dst_port = global_dport;
+    //seq_num是随机值
+    //两个连续的包的seqnum的差值就是tcp报文的长度，这也是为什么tcp包头没有包含数据长度的原因
+    tcp->seq_num = htonl(rand());
+    tcp->recv_ack = 0x0;
+    tcp->data_off = 0x50;
+    //tcp->tcp_flags = 0x1 << 1;
+    tcp->tcp_flags = RTE_TCP_SYN_FLAG | RTE_TCP_ACK_FLAG;
+    //tcp->rx_win = htons(4096);  //rmem
+    tcp->rx_win = TCPINIT_WINDOWS;
+    tcp->cksum = 0;
+    tcp->cksum = rte_ipv4_udptcp_cksum(iphdr, tcp);
+
+    return 0;
+}
+
+
 static void handle_tcp_packet(struct rte_tcp_hdr *tcphdr, struct rte_ether_hdr *ethhdr, struct rte_ipv4_hdr *iphdr, struct rte_mempool *mbuf_pool, uint8_t portid) {
     rte_memcpy(global_smac, ethhdr->d_addr.addr_bytes, RTE_ETHER_ADDR_LEN);
     rte_memcpy(global_dmac, ethhdr->s_addr.addr_bytes, RTE_ETHER_ADDR_LEN);
@@ -180,21 +253,53 @@ static void handle_tcp_packet(struct rte_tcp_hdr *tcphdr, struct rte_ether_hdr *
     rte_memcpy(&global_sport, &tcphdr->dst_port, sizeof(uint16_t));
     rte_memcpy(&global_dport, &tcphdr->src_port, sizeof(uint16_t));
 
-    print_global_info(iphdr, tcphdr);
+    global_flags = tcphdr->tcp_flags;
+    global_seqnum = rte_cpu_to_cpu_32(tcphdr->sent_seq);
+    global_acknum = rte_cpu_to_cpu_32(tcphdr->recv_ack);
 
-    uint16_t length = rte_be_to_cpu_16(udphdr->dgram_len);
-    uint16_t total_length = sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr) + length;
-    struct rte_mbuf *mbuf = rte_pktmbuf_alloc(mbuf_pool);
-    if (!mbuf) {
-        rte_exit(EXIT_FAILURE, "could not alloc mbuf\n");
+#if 0
+    struct in_addr addr;
+    addr.s_addr = iphdr->src_addr;
+    addr.s_addr = iphdr->dst_addr;
+#endif
+    //三次握手判断&处理
+    if(global_flags& RTE_TCP_SYN_FLAG){
+        if(tcp_status == USTACK_TCP_STATUS_LISTEN){
+            uint16_t total_length = sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_tcp_hdr);
+            struct rte_mbuf *mbuf = rte_pktmbuf_alloc(mbuf_pool);
+            if(!mbuf){
+                rte_exit(EXIT_FAILURE, "could not alloc mbuf\n");
+            }
+            mbuf->pkt_len = total_length;
+            mbuf->data_len = total_length;
+
+            uint8_t * msg = rte_pktmbuf_mtod(mbuf, uint8_t *);
+            ustack_encode_tcp_pkt(msg, total_length);
+            rte_eth_tx_burst(global_portid, 0 ,&mbuf, 1);
+
+            //修改tcp状态
+            tcp_status = USTACK_TCP_STATUS_SYN_RCVD;
+        }
     }
-    mbuf->pkt_len = total_length;
-    mbuf->data_len = total_length;
+    //
+    if(global_flags & RTE_TCP_ACK_FLAG){
+        if(tcp_status == USTACK_TCP_STATUS_SYN_RCVD){
+            printf("tcp established\n");
+            tcp_status = USTACK_TCP_STATUS_ESTABLISHED;
+        }
 
-    uint8_t *msg = rte_pktmbuf_mtod(mbuf, uint8_t *);
+    }
 
-    ustack_encode_udp_pkt(msg, (uint8_t *)(udphdr+1), total_length);
-    rte_eth_tx_burst(portid, 0, &mbuf, 1);
+    //
+    if(global_flags & RTE_TCP_PSH_FLAG){
+        printf("tcp established: %d\n", tcp_status);
+        if(tcp_status == USTACK_TCP_STATUS_ESTABLISHED){
+            uint8_t hdrlen = (tcphdr->data_off > 4)* sizeof(uint32_t);
+            uint8_t *data = ((uint8_t *) tcphdr + hdrlen);
+            printf("tcp data:%s\n", data);
+        }
+
+    }
 
 }
 
@@ -238,12 +343,13 @@ int main(int argc, char *argv[]) {
                 //解析tcp报文
                 struct rte_tcp_hdr *tcphdr = (struct rte_tcp_hdr *)(iphdr + 1);
 
-                //handle_tcp_packet(tcphdr, ethhdr, iphdr, mbuf_pool, global_portid);
+                handle_tcp_packet(tcphdr, ethhdr, iphdr, mbuf_pool, global_portid);
                 printf("recv TCP: %s\n", (char *)(tcphdr + 1));
                 printf("***************************************\n");
             }
             else{
                 printf("recv other protocol\n");
+                //TODO
 
             }
         }
