@@ -196,45 +196,52 @@ static void handle_udp_packet(struct rte_udp_hdr *udphdr, struct rte_ether_hdr *
 #endif
 
 #if 1
+/**
+ * 构造并编码一个TCP数据包
+ *
+ * @param msg 目标消息缓冲区指针
+ * @param total_len 总长度，包括以太网头、IP头、TCP头和数据
+ * @return 0 表示成功，-1 表示失败（如参数无效）
+ *
+ * 本函数负责根据给定的总长度构造一个完整的TCP数据包，并设置其以太网头、IP头和TCP头。
+ * 使用DPDK库中的函数来处理内存拷贝和校验和计算。
+ */
 
-static int ustack_encode_tcp_pkt(uint8_t *msg,  uint16_t total_len)
+static int ustack_encode_tcp_pkt(uint8_t *msg, uint16_t total_len)
 {
-    if (!msg || !data || total_len == 0) { // 增加len的有效性检查
-        return -1; // 参数校验失败
+    // 参数校验：消息指针、数据指针和总长度必须有效
+    if (!msg || !data || total_len == 0) {
+        return -1;
     }
 
-    // 第一步：以太网头
+    // 设置以太网头
     struct rte_ether_hdr *ethhdr = (struct rte_ether_hdr *)msg;
     rte_memcpy(ethhdr->d_addr.addr_bytes, global_dmac, RTE_ETHER_ADDR_LEN);
     rte_memcpy(ethhdr->s_addr.addr_bytes, global_smac, RTE_ETHER_ADDR_LEN);
-    ethhdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4); // 使用DPDK提供的转换函数
+    ethhdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 
-    // IP头
+    // 设置IP头
     struct rte_ipv4_hdr *iphdr = (struct rte_ipv4_hdr *)(ethhdr + 1);
     iphdr->version_ihl = 0x45;
     iphdr->type_of_service = 0;
-    iphdr->total_length = rte_cpu_to_be_16(total_len - sizeof(struct rte_ether_hdr)); // 明确写出IP头部大小
+    iphdr->total_length = rte_cpu_to_be_16(total_len - sizeof(struct rte_ether_hdr));
     iphdr->packet_id = 0;
     iphdr->fragment_offset = 0;
     iphdr->time_to_live = 64;
     iphdr->next_proto_id = IPPORT_TCP;
     iphdr->src_addr = global_sip;
     iphdr->dst_addr = global_dip;
-    iphdr->hdr_checksum = 0; // 在计算校验和前将其设为0
+    iphdr->hdr_checksum = 0;
     iphdr->hdr_checksum = rte_ipv4_cksum(iphdr);
 
-    // TCP头
+    // 设置TCP头
     struct rte_tcp_hdr *tcp = (struct rte_tcp_hdr *)(iphdr + 1);
     tcp->src_port = global_sport;
     tcp->dst_port = global_dport;
-    //seq_num是随机值
-    //两个连续的包的seqnum的差值就是tcp报文的长度，这也是为什么tcp包头没有包含数据长度的原因
     tcp->seq_num = htonl(rand());
     tcp->recv_ack = 0x0;
     tcp->data_off = 0x50;
-    //tcp->tcp_flags = 0x1 << 1;
     tcp->tcp_flags = RTE_TCP_SYN_FLAG | RTE_TCP_ACK_FLAG;
-    //tcp->rx_win = htons(4096);  //rmem
     tcp->rx_win = TCPINIT_WINDOWS;
     tcp->cksum = 0;
     tcp->cksum = rte_ipv4_udptcp_cksum(iphdr, tcp);
@@ -263,7 +270,7 @@ static void handle_tcp_packet(struct rte_tcp_hdr *tcphdr, struct rte_ether_hdr *
     addr.s_addr = iphdr->dst_addr;
 #endif
     //三次握手判断&处理
-    if(global_flags& RTE_TCP_SYN_FLAG){
+    if(global_flags & RTE_TCP_SYN_FLAG){
         if(tcp_status == USTACK_TCP_STATUS_LISTEN){
             uint16_t total_length = sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr) + sizeof(struct rte_tcp_hdr);
             struct rte_mbuf *mbuf = rte_pktmbuf_alloc(mbuf_pool);

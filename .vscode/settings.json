@@ -64,6 +64,7 @@
     "memory": "c",
     "istream": "c",
     "tuple": "c",
-    "utility": "c"
+    "utility": "c",
+    "cstdlib": "c"
   }
 }
